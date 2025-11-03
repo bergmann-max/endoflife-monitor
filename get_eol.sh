@@ -177,8 +177,12 @@ fetch_eol_info() {
     [[ -z "$VERSION_LABEL" ]] && VERSION_LABEL="$VERSION"
     [[ -z "$EOL_DATE" ]] && EOL_DATE="null"
 
-    # Output the results in CSV format
-    printf '"%s","%s","%s"\n' "$LABEL" "$VERSION_LABEL" "$EOL_DATE"
+    # Output a robustly escaped CSV line
+    jq -Rnr \
+        --arg label "$LABEL" \
+        --arg version "$VERSION_LABEL" \
+        --arg eol "$EOL_DATE" \
+        '[$label, $version, $eol] | @csv'
 }
 
 # Converts product name to API format: lower-case, hyphen-separated.
