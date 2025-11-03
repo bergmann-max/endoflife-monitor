@@ -2,16 +2,11 @@
 
 set -euo pipefail
 
-# Ensure minimum bash version
-if ((BASH_VERSINFO[0] < 4)); then
-    echo "ERROR: This script requires bash version 4 or higher" >&2
-    exit 1
-fi
-
 # === CONFIGURATION ===
 
 # Rate limiting configuration
-readonly RATE_LIMIT_DELAY=1  # Delay in seconds between API calls
+readonly RATE_LIMIT_DELAY_DEFAULT=0  # Default delay in seconds between API calls
+RATE_LIMIT_DELAY="$RATE_LIMIT_DELAY_DEFAULT"
 
 # Print error messages with a standard prefix, always to stderr
 error() {
@@ -20,7 +15,9 @@ error() {
 
 # Function to implement rate limiting
 rate_limit() {
-    sleep "$RATE_LIMIT_DELAY"
+    if (( RATE_LIMIT_DELAY > 0 )); then
+        sleep "$RATE_LIMIT_DELAY"
+    fi
 }
 
 # Ensure required dependencies are available before running the script
@@ -31,18 +28,16 @@ for cmd in jq curl; do
     fi
 done
 
-readonly API_BASE_URL="https://endoflife.date/api"
-readonly API_LABEL_BASE_URL="https://endoflife.date/api/v1/products"
+readonly API_PRIMARY_URL="https://endoflife.date/api/v1/products"
+readonly API_FALLBACK_URL="https://endoflife.date/api"
 
-# Print usage/help and exit before touching input files
-if [[ "${1:-}" =~ ^(-h|--help)$ ]]; then
+print_usage() {
     cat << EOF
-Usage: ${0}                    # Uses default 'products.csv' in current directory
-       ${0} products.csv        # Uses specified CSV file
-       ${0} path/to/myproducts.csv
+Usage: ${0} [--rate-limit SECONDS] [CSV]
 
 Options:
-  -h, --help    Show this help
+  -r, --rate-limit SECONDS  Delay in seconds between API calls (integer, default: ${RATE_LIMIT_DELAY_DEFAULT})
+  -h, --help                Show this help
 
 Description:
   This script checks End-of-Life (EOL) dates for products using the endoflife.date API.
@@ -54,10 +49,66 @@ Description:
   The output is in "label,version,eol_date" format for each entry.
 
 EOF
-    exit 0
+}
+
+INPUT_CSV=""
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
+        -r|--rate-limit)
+            VALUE="${2:-}"
+            if [[ -z "$VALUE" ]]; then
+                error "--rate-limit requires a value"
+                print_usage >&2
+                exit 2
+            fi
+            if [[ ! "$VALUE" =~ ^[0-9]+$ ]]; then
+                error "--rate-limit expects an integer number of seconds (got '$VALUE')"
+                exit 2
+            fi
+            RATE_LIMIT_DELAY="$VALUE"
+            shift 2
+            ;;
+        --rate-limit=*)
+            VALUE="${1#*=}"
+            if [[ ! "$VALUE" =~ ^[0-9]+$ ]]; then
+                error "--rate-limit expects an integer number of seconds (got '$VALUE')"
+                exit 2
+            fi
+            RATE_LIMIT_DELAY="$VALUE"
+            shift
+            ;;
+        --)
+            shift
+            POSITIONAL_ARGS+=("$@")
+            break
+            ;;
+        -*)
+            error "Unknown option: $1"
+            exit 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ "${#POSITIONAL_ARGS[@]}" -gt 1 ]]; then
+    error "Only one CSV file can be specified"
+    exit 2
 fi
 
-INPUT_CSV="${1:-products.csv}"  # Input CSV file (default: products.csv), must contain product,version lines
+if [[ "${#POSITIONAL_ARGS[@]}" -eq 1 ]]; then
+    INPUT_CSV="${POSITIONAL_ARGS[0]}"
+else
+    INPUT_CSV="products.csv"  # Default CSV file
+fi
 
 # Check if the input CSV exists and is readable
 if [[ ! -r "$INPUT_CSV" ]]; then
@@ -65,132 +116,99 @@ if [[ ! -r "$INPUT_CSV" ]]; then
     exit 2
 fi
 
-SCRIPT_HAS_ERRORS=0  # Tracks if any error occurred, sets the exit code accordingly
-
 # === FUNCTIONS ===
 
-# Fetches EOL info for a given product and version, outputs label, version, and EOL date, or logs errors.
+# Fetches EOL info for a given product and version, outputs label, version, and EOL date
 fetch_eol_info() {
     local PRODUCT="$1"
     local VERSION="$2"
 
     local API_PRODUCT
-    API_PRODUCT=$(map_product "$PRODUCT") || { error "Failed to map product: $PRODUCT"; SCRIPT_HAS_ERRORS=1; return 1; }
-    local API_URL="${API_BASE_URL}/${API_PRODUCT}.json"
-    local LABEL_URL="${API_LABEL_BASE_URL}/${API_PRODUCT}/"
+    API_PRODUCT=$(map_product "$PRODUCT")
     
     # Apply rate limiting
     rate_limit
-
-    local LABEL_JSON LABEL
-    if ! LABEL_JSON=$(curl -sf --max-time 10 "$LABEL_URL"); then
-        error "$PRODUCT,$VERSION,API label request failed"
-        SCRIPT_HAS_ERRORS=1
-        return 1
-    fi
-    if ! LABEL=$(echo "$LABEL_JSON" | jq -er '.result.label' 2>/dev/null); then
-        LABEL="UNKNOWN"
-    fi
-
-    local JSON FIRST_CHAR EOL_DATE=""
-    if ! JSON=$(curl -sf --max-time 10 "$API_URL"); then
-        error "$LABEL,$VERSION,API product request failed"
-        SCRIPT_HAS_ERRORS=1
-        return 1
-    fi
-
-    FIRST_CHAR=$(echo "$JSON" | head -c 1)
-
-    # The API may return either an array or an object as top-level JSON, handle both cases.
-    if [[ "$FIRST_CHAR" == "[" ]]; then
-        if ! EOL_DATE=$(echo "$JSON" | jq -e -r --arg ver "$VERSION" '
-            .[] | select(
-                (.cycle == $ver) or
-                (.name == $ver) or
-                ((.name|tostring|startswith($ver)))
-            ) | .eol // .eolFrom // .eoasFrom // .eoesFrom' 2>/dev/null | head -n1); then
-            error "$LABEL,$VERSION,EOL not found (array)"
-            SCRIPT_HAS_ERRORS=1
+    
+    # Get product and version info (v1 endpoint preferred, legacy endpoint as fallback)
+    local LABEL="$PRODUCT"
+    local JSON
+    if ! JSON=$(curl -sf --max-time 10 "${API_PRIMARY_URL}/${API_PRODUCT}/"); then
+        if ! JSON=$(curl -sf --max-time 10 "${API_FALLBACK_URL}/${API_PRODUCT}.json"); then
+            error "$LABEL,$VERSION,API request failed"
             return 1
         fi
-    elif [[ "$FIRST_CHAR" == "{" ]]; then
-        if ! EOL_DATE=$(echo "$JSON" | jq -e -r --arg ver "$VERSION" '
-            .result.releases[]? | select(
-                (.cycle == $ver) or
-                (.name == $ver) or
-                ((.name|tostring|startswith($ver)))
-            ) | .eol // .eolFrom // .eoasFrom // .eoesFrom' 2>/dev/null | head -n1); then
-            error "$LABEL,$VERSION,EOL not found (object)"
-            SCRIPT_HAS_ERRORS=1
-            return 1
-        fi
-    else
-        error "$LABEL,$VERSION,Invalid JSON"
-        SCRIPT_HAS_ERRORS=1
-        return 1
+    fi
+    
+    # Try to extract a human-friendly label from the primary response
+    local EXTRACTED_LABEL
+    if EXTRACTED_LABEL=$(echo "$JSON" | jq -r '
+        if type == "object" then
+            (.result.label // .label // empty)
+        else
+            empty
+        end' 2>/dev/null); then
+        [[ -n "$EXTRACTED_LABEL" ]] && LABEL="$EXTRACTED_LABEL"
     fi
 
-    # EOL_DATE must not be empty or null
-    if [[ -z "$EOL_DATE" || "$EOL_DATE" == "null" ]]; then
-        error "$LABEL,$VERSION,EOL not found"
-        SCRIPT_HAS_ERRORS=1
-        return 1
-    else
-        echo "$LABEL,$VERSION,$EOL_DATE"
-        return 0
+    # Process the version data with a single jq call
+    local VERSION_LABEL EOL_DATE VERSION_INFO
+    if VERSION_INFO=$(echo "$JSON" | jq -r --arg ver "$VERSION" '
+        def matches($ver):
+            (.cycle == $ver) or
+            (.name == $ver) or
+            ((.name|tostring|startswith($ver)));
+        def find_release($ver):
+            try first(
+                if type == "array" then
+                    .[] | select(matches($ver))
+                elif type == "object" then
+                    .result.releases[]? | select(matches($ver))
+                else
+                    empty
+                end
+            ) catch null;
+        find_release($ver) as $rel |
+        [
+            ($rel.releaseLabel // $rel.label // $rel.cycle // ""),
+            ($rel.eol // $rel.eolFrom // $rel.eoasFrom // $rel.eoesFrom // "")
+        ] | @tsv' 2>/dev/null); then
+        IFS=$'\t' read -r VERSION_LABEL EOL_DATE <<< "$VERSION_INFO"
     fi
+    [[ -z "$VERSION_LABEL" ]] && VERSION_LABEL="$VERSION"
+    [[ -z "$EOL_DATE" ]] && EOL_DATE="null"
+
+    # Output the results in CSV format
+    printf '"%s","%s","%s"\n' "$LABEL" "$VERSION_LABEL" "$EOL_DATE"
 }
 
 # Converts product name to API format: lower-case, hyphen-separated.
-# Special handling for products with common aliases.
 map_product() {
-    local IN="$1"
-    local LPRODUCT
-    if [[ "${BASH_VERSINFO:-0}" -ge 4 ]]; then
-        LPRODUCT="${IN,,}"
-    else
-        LPRODUCT=$(echo "$IN" | tr '[:upper:]' '[:lower:]')
-    fi
-    # Replace spaces with hyphens
-    printf '%s\n' "${LPRODUCT// /-}"
+    echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
 }
 
 # === MAIN LOGIC ===
 
-# Process each line as product,version. Skip header if present.
-{
-    # Read first line to check if it's a header
-    if IFS=, read -r first_product first_version _; then
-        # Convert to lowercase for case-insensitive comparison
-        first_product_lower=$(echo "$first_product" | tr '[:upper:]' '[:lower:]')
-        first_version_lower=$(echo "$first_version" | tr '[:upper:]' '[:lower:]')
-        
-        # Process first line only if it's not a header
-        if [[ ! "$first_product_lower" =~ ^[[:space:]]*product[[:space:]]*$ ]] || \
-           [[ ! "$first_version_lower" =~ ^[[:space:]]*version[[:space:]]*$ ]]; then
-            # Trim and process first line as normal data
-            PRODUCT="${first_product#"${first_product%%[![:space:]]*}"}"
-            PRODUCT="${PRODUCT%"${PRODUCT##*[![:space:]]}"}"
-            VERSION="${first_version#"${first_version%%[![:space:]]*}"}"
-            VERSION="${VERSION%"${VERSION##*[![:space:]]}"}"
-            if [[ -n "$PRODUCT" && -n "$VERSION" ]]; then
-                fetch_eol_info "$PRODUCT" "$VERSION"
-            fi
-        fi
+EXIT_CODE=0
+
+# Process each line as product,version, skipping header if present
+while IFS=, read -r product version _; do
+    # Skip header line
+    if [[ "$product" =~ ^[[:space:]]*product[[:space:]]*$ ]] && \
+       [[ "$version" =~ ^[[:space:]]*version[[:space:]]*$ ]]; then
+        continue
     fi
+    
+    # Trim whitespace
+    product="${product#"${product%%[![:space:]]*}"}"
+    product="${product%"${product##*[![:space:]]}"}"
+    version="${version#"${version%%[![:space:]]*}"}"
+    version="${version%"${version##*[![:space:]]}"}"
+    
+    # Skip empty lines
+    [[ -z "$product" || -z "$version" ]] && continue
+    
+    # Process the entry
+    fetch_eol_info "$product" "$version" || EXIT_CODE=1
+done < "$INPUT_CSV"
 
-    # Process remaining lines
-    while IFS=, read -r PRODUCT VERSION _; do
-        # Trim leading/trailing whitespace
-        PRODUCT="${PRODUCT#"${PRODUCT%%[![:space:]]*}"}"
-        PRODUCT="${PRODUCT%"${PRODUCT##*[![:space:]]}"}"
-        VERSION="${VERSION#"${VERSION%%[![:space:]]*}"}"
-        VERSION="${VERSION%"${VERSION##*[![:space:]]}"}"
-        if [[ -z "$PRODUCT" || -z "$VERSION" ]]; then
-            continue
-        fi
-        fetch_eol_info "$PRODUCT" "$VERSION"
-    done
-} < "$INPUT_CSV"
-
-exit $SCRIPT_HAS_ERRORS
+exit $EXIT_CODE
