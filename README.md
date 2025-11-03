@@ -9,6 +9,7 @@ but you can just as well run it manually and inspect the neatly formatted result
 
 - Uses `products.csv` (or a custom CSV) with `product,version` rows for input.
 - Emits results in `label,version,eol_date` format.
+- Returns `null` for `eol_date` whenever endoflife.date has not yet published that product version's EOL date.
 - Optional rate limiting between API calls via `--rate-limit`.
 
 ## Requirements
