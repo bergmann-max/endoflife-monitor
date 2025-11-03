@@ -3,7 +3,7 @@
 Shell script that reads a list of products and versions from a CSV file,
 queries the [endoflife.date](https://endoflife.date) API, and prints their End-of-Life (EOL) dates.
 The script emits machine-friendly CSV output so you can feed it directly into other tools or automation,
-but you can just as well run it manually and inspect the neatly formatted results in your terminal.
+but you can just as well run it manually and inspect the results in your terminal.
 
 ## Features
 
@@ -70,4 +70,4 @@ $ ./get_eol.sh
 
 ## License
 
-[Unlicense](LICENSE).
+[Unlicense](LICENSE)
