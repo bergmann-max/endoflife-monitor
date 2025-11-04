@@ -28,8 +28,7 @@ for cmd in jq curl; do
     fi
 done
 
-readonly API_PRIMARY_URL="https://endoflife.date/api/v1/products"
-readonly API_FALLBACK_URL="https://endoflife.date/api"
+readonly API_URL="https://endoflife.date/api/v1/products"
 
 print_usage() {
     cat << EOF
@@ -51,7 +50,6 @@ Description:
 EOF
 }
 
-INPUT_CSV=""
 POSITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -129,15 +127,13 @@ fetch_eol_info() {
     # Apply rate limiting
     rate_limit
     
-    # Get product and version info (v1 endpoint preferred, legacy endpoint as fallback)
+    # Get product and version info from the API
     local LABEL="$PRODUCT"
     local CATEGORY="null"
     local JSON
-    if ! JSON=$(curl -sf --max-time 10 "${API_PRIMARY_URL}/${API_PRODUCT}/"); then
-        if ! JSON=$(curl -sf --max-time 10 "${API_FALLBACK_URL}/${API_PRODUCT}.json"); then
-            error "$LABEL,$VERSION,API request failed"
-            return 1
-        fi
+    if ! JSON=$(curl -sf --max-time 10 "${API_URL}/${API_PRODUCT}/"); then
+        error "$LABEL,$VERSION,API request failed"
+        return 1
     fi
     
     # Try to extract a human-friendly label from the primary response
@@ -155,8 +151,6 @@ fetch_eol_info() {
         [[ -n "$EXTRACTED_LABEL" ]] && LABEL="$EXTRACTED_LABEL"
         if [[ -n "$EXTRACTED_CATEGORY" && "$EXTRACTED_CATEGORY" != "null" ]]; then
             CATEGORY="$EXTRACTED_CATEGORY"
-        elif [[ "$EXTRACTED_CATEGORY" == "null" ]]; then
-            CATEGORY="null"
         fi
     fi
 
