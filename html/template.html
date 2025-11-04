@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Language" content="en" />
+
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>End of Life Monitor</title>
+
+    <meta name="description" content="End of Life Monitor." />
+    <meta property="og:title" content="End of Life Monitor." />
+    <meta property="og:description" content="End of Life Monitor." />
+
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+
+  <body
+    class="bg-gray-50 text-gray-800 font-sans leading-relaxed tracking-wide p-2 sm:p-8"
+  >
+    <main
+      class="w-full max-w-3xl mx-auto bg-white shadow-xl rounded-2xl p-2 sm:p-6 pb-24 space-y-8"
+    >
+      <header>
+        <h1
+          class="text-2xl sm:text-4xl md:text-5xl font-extrabold text-center text-indigo-700 tracking-tight leading-tight mb-6 sm:mb-10 border-b-2 border-indigo-100 pb-2 sm:pb-4 break-words"
+        >
+          ⌛ End of Life Monitor
+        </h1>
+      </header>
+      <section class="space-y-6">
+        <div class="overflow-x-auto">
+          <table class="min-w-full border-separate border-spacing-y-2">
+            <thead>
+              <tr
+                class="text-left text-xs font-semibold uppercase tracking-wider text-gray-500"
+              >
+                <th
+                  scope="col"
+                  class="px-4 py-2 cursor-pointer select-none hover:text-indigo-700"
+                  data-sort-index="0"
+                  data-sort-type="text"
+                  aria-sort="none"
+                  tabindex="0"
+                  role="button"
+                >
+                  <span class="inline-flex items-center gap-1">
+                    <span>Product</span>
+                    <span
+                      class="sort-indicator text-[0.6rem] text-gray-300 transition-colors"
+                      aria-hidden="true"
+                    >
+                      ⇵
+                    </span>
+                  </span>
+                </th>
+                <th scope="col" class="px-4 py-2">Version</th>
+                <th
+                  scope="col"
+                  class="px-4 py-2 cursor-pointer select-none hover:text-indigo-700"
+                  data-sort-index="2"
+                  data-sort-type="text"
+                  aria-sort="none"
+                  tabindex="0"
+                  role="button"
+                >
+                  <span class="inline-flex items-center gap-1">
+                    <span>Category</span>
+                    <span
+                      class="sort-indicator text-[0.6rem] text-gray-300 transition-colors"
+                      aria-hidden="true"
+                    >
+                      ⇵
+                    </span>
+                  </span>
+                </th>
+                <th
+                  scope="col"
+                  class="px-4 py-2 cursor-pointer select-none hover:text-indigo-700"
+                  data-sort-index="3"
+                  data-sort-type="date"
+                  aria-sort="none"
+                  tabindex="0"
+                  role="button"
+                >
+                  <span class="inline-flex items-center gap-1">
+                    <span>End of Life</span>
+                    <span
+                      class="sort-indicator text-[0.6rem] text-gray-300 transition-colors"
+                      aria-hidden="true"
+                    >
+                      ⇵
+                    </span>
+                  </span>
+                </th>
+              </tr>
+            </thead>
+            <tbody
+              class="text-sm sm:text-base bg-white shadow-sm ring-1 ring-indigo-100/70 rounded-xl"
+            >
+              <!--TABLE_ROWS-->
+            </tbody>
+          </table>
+        </div>
+        <p class="text-xs text-gray-400 italic">
+          Data source:
+          <a
+            class="text-indigo-500 hover:text-indigo-700"
+            href="https://endoflife.date"
+            rel="noopener noreferrer"
+            >endoflife.date</a
+          >
+        </p>
+      </section>
+      <footer
+        class="text-center text-xs sm:text-sm text-gray-400 mt-8 sm:mt-12 border-t pt-4 sm:pt-6"
+      >
+        <a href="https://github.com/bergmann-max/endoflife-monitor"
+          >github.com/bergmann-max/endoflife-monitor</a
+        >
+      </footer>
+    </main>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const table = document.querySelector("table");
+        if (!table) return;
+
+        const tbody = table.querySelector("tbody");
+        const sortableHeaders = table.querySelectorAll("th[data-sort-index]");
+        const activeDirections = new Map();
+
+        sortableHeaders.forEach((header) => {
+          header.addEventListener("click", () => sortColumn(header));
+          header.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              sortColumn(header);
+            }
+          });
+        });
+
+        function sortColumn(header) {
+          const columnIndex = Number(header.dataset.sortIndex);
+          const sortType = header.dataset.sortType || "text";
+          const nextDirection =
+            activeDirections.get(columnIndex) === "asc" ? "desc" : "asc";
+
+          activeDirections.clear();
+          activeDirections.set(columnIndex, nextDirection);
+
+          const sortedRows = Array.from(tbody.querySelectorAll("tr")).sort(
+            (rowA, rowB) =>
+              compareValues(
+                extractCellValue(rowA, columnIndex, sortType),
+                extractCellValue(rowB, columnIndex, sortType),
+                nextDirection,
+                sortType
+              )
+          );
+
+          sortedRows.forEach((row) => tbody.appendChild(row));
+          updateHeaderStates(header, nextDirection);
+        }
+
+        function extractCellValue(row, columnIndex, sortType) {
+          const cell = row.children[columnIndex];
+          const text = cell ? cell.textContent.trim() : "";
+          const isEmpty = text === "" || text.toLowerCase() === "null";
+
+          if (isEmpty) {
+            return { isEmpty: true, value: text };
+          }
+
+          if (sortType === "date") {
+            const timestamp = Date.parse(text);
+            return {
+              isEmpty: false,
+              value: Number.isNaN(timestamp)
+                ? Number.NEGATIVE_INFINITY
+                : timestamp,
+            };
+          }
+
+          return { isEmpty: false, value: text.toLowerCase() };
+        }
+
+        function compareValues(valueA, valueB, direction, sortType) {
+          if (valueA.isEmpty && valueB.isEmpty) return 0;
+          if (valueA.isEmpty) return 1;
+          if (valueB.isEmpty) return -1;
+
+          let comparison = 0;
+
+          if (sortType === "date") {
+            comparison = valueA.value - valueB.value;
+          } else {
+            comparison = valueA.value.localeCompare(valueB.value, undefined, {
+              sensitivity: "base",
+            });
+          }
+
+          if (comparison === 0) return 0;
+          return direction === "asc"
+            ? Math.sign(comparison)
+            : -Math.sign(comparison);
+        }
+
+        function updateHeaderStates(activeHeader, direction) {
+          sortableHeaders.forEach((header) => {
+            const indicator = header.querySelector(".sort-indicator");
+
+            if (header === activeHeader) {
+              header.setAttribute(
+                "aria-sort",
+                direction === "asc" ? "ascending" : "descending"
+              );
+              if (indicator) {
+                indicator.textContent = direction === "asc" ? "▲" : "▼";
+                indicator.classList.remove("text-gray-300");
+                indicator.classList.add("text-indigo-500");
+              }
+            } else {
+              header.setAttribute("aria-sort", "none");
+              if (indicator) {
+                indicator.textContent = "⇵";
+                indicator.classList.remove("text-indigo-500");
+                indicator.classList.add("text-gray-300");
+              }
+            }
+          });
+        }
+      });
+    </script>
+  </body>
+</html>
