@@ -14,6 +14,7 @@ but you can just as well run it manually and inspect the results in your termina
 
 ## Requirements
 
+- `bash` (Version >= 4)
 - `curl` for HTTP requests.
 - `jq` for JSON parsing.
 
