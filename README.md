@@ -8,7 +8,7 @@ but you can just as well run it manually and inspect the results in your termina
 ## Features
 
 - Uses `products.csv` (or a custom CSV) with `product,version` rows for input.
-- Emits results in `label,version,eol_date` format.
+- Emits results in `label,version,category,eol_date` format.
 - Returns `null` for `eol_date` whenever endoflife.date has not yet published that product version's EOL date.
 - Optional rate limiting between API calls via `--rate-limit`.
 
@@ -57,16 +57,31 @@ output:
 
 ```
 $ ./get_eol.sh
-"Debian","13 (Trixie)","2028-08-09"
-"Ubuntu","24.04 'Noble Numbat' (LTS)","2029-04-25"
-"Ansible","12","null"
-"Grafana","12.2","2026-06-23"
-"Kubernetes","1.34","2026-10-27"
-"Apple iPhone","17","null"
-"Apple Watch","Series 11","null"
-"Google Pixel","Pixel 10 Pro","2032-08-01"
-"Google Pixel Watch","Pixel Watch 4","2028-10-01"
+"Debian","13 (Trixie)","os","2028-08-09"
+"Ubuntu","24.04 'Noble Numbat' (LTS)","os","2029-04-25"
+"Ansible","12","app","null"
+"Grafana","12.2","server-app","2026-06-23"
+"Kubernetes","1.34","server-app","2026-10-27"
+"Apple iPhone","17","device","null"
+"Apple Watch","Series 11","device","null"
+"Google Pixel","Pixel 10 Pro","device","2032-08-01"
+"Google Pixel Watch","Pixel Watch 4","device","2028-10-01"
 ```
+
+---
+
+## Static website script
+
+`html/create_eol_html.sh` builds a static HTML report based on the CSV output from `get_eol.sh` and writes the result to `html/index.html` using `html/template.html` as the base.
+
+```sh
+./html/create_eol_html.sh                # uses products.csv via get_eol.sh
+```
+
+## More info
+
+https://endoflife.date
+https://endoflife.date/docs/api/v1/
 
 ## License
 

@@ -42,11 +42,11 @@ Options:
 Description:
   This script checks End-of-Life (EOL) dates for products using the endoflife.date API.
   It reads a CSV file containing product and version information and outputs the
-  corresponding label (product name), version, and EOL date for each product.
+  corresponding label (product name), version, category, and EOL date for each product.
 
   The input CSV must be in "product,version" format.
   By default, "products.csv" is used if no file is specified.
-  The output is in "label,version,eol_date" format for each entry.
+  The output is in "label,version,category,eol_date" format for each entry.
 
 EOF
 }
@@ -118,7 +118,7 @@ fi
 
 # === FUNCTIONS ===
 
-# Fetches EOL info for a given product and version, outputs label, version, and EOL date
+# Fetches EOL info for a given product and version, outputs label, version, category, and EOL date
 fetch_eol_info() {
     local PRODUCT="$1"
     local VERSION="$2"
@@ -131,6 +131,7 @@ fetch_eol_info() {
     
     # Get product and version info (v1 endpoint preferred, legacy endpoint as fallback)
     local LABEL="$PRODUCT"
+    local CATEGORY="null"
     local JSON
     if ! JSON=$(curl -sf --max-time 10 "${API_PRIMARY_URL}/${API_PRODUCT}/"); then
         if ! JSON=$(curl -sf --max-time 10 "${API_FALLBACK_URL}/${API_PRODUCT}.json"); then
@@ -140,14 +141,23 @@ fetch_eol_info() {
     fi
     
     # Try to extract a human-friendly label from the primary response
-    local EXTRACTED_LABEL
-    if EXTRACTED_LABEL=$(echo "$JSON" | jq -r '
+    local META_INFO EXTRACTED_LABEL EXTRACTED_CATEGORY
+    if META_INFO=$(echo "$JSON" | jq -r '
         if type == "object" then
-            (.result.label // .label // empty)
+            [
+                (.result.label // .label // ""),
+                (.result.category // .category // "")
+            ]
         else
-            empty
-        end' 2>/dev/null); then
+            ["",""]
+        end | @tsv' 2>/dev/null); then
+        IFS=$'\t' read -r EXTRACTED_LABEL EXTRACTED_CATEGORY <<< "$META_INFO"
         [[ -n "$EXTRACTED_LABEL" ]] && LABEL="$EXTRACTED_LABEL"
+        if [[ -n "$EXTRACTED_CATEGORY" && "$EXTRACTED_CATEGORY" != "null" ]]; then
+            CATEGORY="$EXTRACTED_CATEGORY"
+        elif [[ "$EXTRACTED_CATEGORY" == "null" ]]; then
+            CATEGORY="null"
+        fi
     fi
 
     # Process the version data with a single jq call
@@ -181,8 +191,9 @@ fetch_eol_info() {
     jq -Rnr \
         --arg label "$LABEL" \
         --arg version "$VERSION_LABEL" \
+        --arg category "$CATEGORY" \
         --arg eol "$EOL_DATE" \
-        '[$label, $version, $eol] | @csv'
+        '[$label, $version, $category, $eol] | @csv'
 }
 
 # Converts product name to API format: lower-case, hyphen-separated.
